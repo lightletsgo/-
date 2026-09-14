@@ -108,6 +108,11 @@ async function showDashboard() {
     <div class="room-code-display">방 코드: ${currentRoomCode}</div>
     <p class="subtitle">이 코드를 친구들에게 공유하세요</p>
     <button id="switchRoomBtn" class="secondary">다른 방으로 전환</button>
+    <div class="card">
+      <p><b>⏱ 실패 시 재도전 대기 시간</b></p>
+      <input type="number" id="penaltyInput" min="0" style="width:80px;display:inline-block;"> 분
+      <button id="savePenaltyBtn" style="width:auto;padding:8px 14px;margin-left:8px;">저장</button>
+    </div>
     <h3>📥 승인 대기 중인 제출</h3>
     <div id="pendingList"></div>
     <h3>📊 전체 참가자 현황</h3>
@@ -121,9 +126,29 @@ async function showDashboard() {
     showEntry();
   });
 
+  await loadPenaltySetting();
+  document.getElementById('savePenaltyBtn').addEventListener('click', async () => {
+    const val = parseInt(document.getElementById('penaltyInput').value, 10);
+    if (isNaN(val) || val < 0) {
+      alert('0 이상의 숫자를 입력해주세요.');
+      return;
+    }
+    await supabaseClient.from('rooms').update({ penalty_minutes: val }).eq('id', currentRoomId);
+    showToast(`⏱ 페널티 ${val}분으로 저장했어요`);
+  });
+
   await refreshAll();
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, 5000);
+}
+
+async function loadPenaltySetting() {
+  const { data: room } = await supabaseClient
+    .from('rooms')
+    .select('penalty_minutes')
+    .eq('id', currentRoomId)
+    .single();
+  document.getElementById('penaltyInput').value = (room && typeof room.penalty_minutes === 'number') ? room.penalty_minutes : 10;
 }
 
 async function refreshAll() {
@@ -228,7 +253,7 @@ async function loadStatusTable() {
       .eq('participant_id', p.id)
       .eq('status', 'completed');
 
-    const total = (completed || []).reduce((sum, c) => sum + (c.missions_master?.base_prize || 0), 0);
+    const total = (completed || []).reduce((sum, c) => sum + (c.final_prize ?? c.missions_master?.base_prize ?? 0), 0);
     const maxLevel = (completed || []).reduce((max, c) => Math.max(max, c.level), 0);
 
     rows += `<tr><td>${p.nickname}</td><td>${maxLevel > 0 ? maxLevel + '단계 완료' : '-'}</td><td>${total.toLocaleString()}원</td></tr>`;
