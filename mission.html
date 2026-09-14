@@ -67,13 +67,36 @@ function renderLevelSelect() {
 async function assignMission(level) {
   contentEl.innerHTML = '<div class="status">미션 뽑는 중...</div>';
 
-  const { data: missions, error } = await supabaseClient
+  // 이 참가자가 이미 받았던 미션 id 목록 조회 (중복 방지)
+  const { data: previous } = await supabaseClient
+    .from('assigned_missions')
+    .select('mission_id')
+    .eq('participant_id', participantId);
+
+  const usedIds = (previous || []).map(p => p.mission_id);
+
+  let query = supabaseClient
     .from('missions_master')
     .select('*')
     .eq('level', level);
 
-  if (error || !missions || missions.length === 0) {
+  if (usedIds.length > 0) {
+    query = query.not('id', 'in', `(${usedIds.join(',')})`);
+  }
+
+  const { data: missions, error } = await query;
+
+  if (error) {
     contentEl.innerHTML = '<div class="error-msg">미션을 불러오지 못했어요.</div>';
+    return;
+  }
+
+  if (!missions || missions.length === 0) {
+    contentEl.innerHTML = `
+      <div class="card status">이 단계의 미션을 모두 수행하셨어요! 다른 단계를 선택해보세요.</div>
+      <button id="backToLevelBtn" class="secondary">단계 다시 선택하기</button>
+    `;
+    document.getElementById('backToLevelBtn').addEventListener('click', renderLevelSelect);
     return;
   }
 
@@ -203,7 +226,11 @@ function renderResult(assigned, approved) {
     `;
     document.getElementById('takeBtn').addEventListener('click', async () => {
       await supabaseClient.from('assigned_missions').update({ status: 'completed' }).eq('id', assigned.id);
-      contentEl.innerHTML = '<div class="card status">💰 상금 확정! 수고하셨어요.</div>';
+      contentEl.innerHTML = `
+        <div class="card status">💰 상금 확정! 수고하셨어요.</div>
+        <button id="nextMissionBtn">다음 미션 도전하기</button>
+      `;
+      document.getElementById('nextMissionBtn').addEventListener('click', renderLevelSelect);
     });
     document.getElementById('doubleBtn').addEventListener('click', async () => {
       await supabaseClient.from('assigned_missions').update({ status: 'doubled_up', chosen_double: true }).eq('id', assigned.id);
