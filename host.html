@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>사회자 대시보드</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.container { max-width: 720px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+.sub-card { display: flex; gap: 12px; align-items: center; }
+.sub-thumb { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; background: #eee; flex-shrink: 0; }
+.sub-info { flex: 1; }
+.sub-actions { display: flex; gap: 6px; }
+.sub-actions button { width: auto; padding: 8px 14px; font-size: 13px; margin: 0; }
+.approve-btn { background: #4caf6d; }
+.reject-btn { background: #e04545; }
+.room-code-display { text-align: center; font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #ff7a45; margin: 10px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎤 사회자 대시보드</h1>
+  <div id="content"></div>
+</div>
+
+<script src="config.js"></script>
+<script>
+let currentRoomId = localStorage.getItem('host_room_id');
+let currentRoomCode = localStorage.getItem('host_room_code');
+const contentEl = document.getElementById('content');
+let refreshTimer = null;
+
+function init() {
+  if (currentRoomId) {
+    showDashboard();
+  } else {
+    showEntry();
+  }
+}
+
+function showEntry() {
+  contentEl.innerHTML = `
+    <div class="card">
+      <p><b>새 방 만들기</b></p>
+      <input type="text" id="hostName" placeholder="사회자 이름">
+      <button id="createRoomBtn">방 만들기</button>
+    </div>
+    <div class="card">
+      <p><b>이미 만든 방 열기</b></p>
+      <input type="text" id="existingCode" placeholder="방 코드 입력">
+      <div class="error-msg" id="entryError"></div>
+      <button id="openRoomBtn" class="secondary">방 열기</button>
+    </div>
+  `;
+
+  document.getElementById('createRoomBtn').addEventListener('click', async () => {
+    const hostName = document.getElementById('hostName').value.trim() || '사회자';
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    const { data, error } = await supabaseClient
+      .from('rooms')
+      .insert({ room_code: code, host_name: hostName })
+      .select()
+      .single();
+    if (error) {
+      alert('오류: ' + error.message);
+      return;
+    }
+    currentRoomId = data.id;
+    currentRoomCode = data.room_code;
+    localStorage.setItem('host_room_id', currentRoomId);
+    localStorage.setItem('host_room_code', currentRoomCode);
+    showDashboard();
+  });
+
+  document.getElementById('openRoomBtn').addEventListener('click', async () => {
+    const code = document.getElementById('existingCode').value.trim();
+    const { data, error } = await supabaseClient
+      .from('rooms')
+      .select('*')
+      .eq('room_code', code)
+      .single();
+    if (error || !data) {
+      document.getElementById('entryError').textContent = '존재하지 않는 방 코드예요.';
+      return;
+    }
+    currentRoomId = data.id;
+    currentRoomCode = data.room_code;
+    localStorage.setItem('host_room_id', currentRoomId);
+    localStorage.setItem('host_room_code', currentRoomCode);
+    showDashboard();
+  });
+}
+
+async function showDashboard() {
+  contentEl.innerHTML = `
+    <div class="room-code-display">방 코드: ${currentRoomCode}</div>
+    <p class="subtitle">이 코드를 친구들에게 공유하세요</p>
+    <button id="switchRoomBtn" class="secondary">다른 방으로 전환</button>
+    <h3>📥 승인 대기 중인 제출</h3>
+    <div id="pendingList"></div>
+    <h3>📊 전체 참가자 현황</h3>
+    <div id="statusTable"></div>
+  `;
+  document.getElementById('switchRoomBtn').addEventListener('click', () => {
+    localStorage.removeItem('host_room_id');
+    localStorage.removeItem('host_room_code');
+    currentRoomId = null;
+    if (refreshTimer) clearInterval(refreshTimer);
+    showEntry();
+  });
+
+  await refreshAll();
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(refreshAll, 5000);
+}
+
+async function refreshAll() {
+  await loadPending();
+  await loadStatusTable();
+}
+
+async function loadPending() {
+  const { data: assignedList } = await supabaseClient
+    .from('assigned_missions')
+    .select('*, missions_master(*), participants!inner(nickname, room_id)')
+    .eq('participants.room_id', currentRoomId)
+    .eq('status', 'submitted');
+
+  const pendingEl = document.getElementById('pendingList');
+  if (!assignedList || assignedList.length === 0) {
+    pendingEl.innerHTML = '<div class="card status">대기 중인 제출이 없어요</div>';
+    return;
+  }
+
+  let html = '';
+  for (const am of assignedList) {
+    const { data: sub } = await supabaseClient
+      .from('submissions')
+      .select('*')
+      .eq('assigned_mission_id', am.id)
+      .order('submitted_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!sub) continue;
+
+    const isImage = /\.(jpe?g|png|gif|webp)$/i.test(sub.media_url || '');
+
+    html += `
+      <div class="card sub-card">
+        ${isImage
+          ? `<img class="sub-thumb" src="${sub.media_url}">`
+          : `<div class="sub-thumb"></div>`}
+        <div class="sub-info">
+          <b>${am.participants.nickname}</b> · ${am.level}단계<br>
+          ${am.missions_master.content}<br>
+          <a href="${sub.media_url}" target="_blank">파일 열기</a>
+        </div>
+      </div>
+      <div class="sub-actions" style="margin-bottom:16px;">
+        <button class="approve-btn" onclick="approveSubmission('${sub.id}', '${am.id}')">✅ 승인</button>
+        <button class="reject-btn" onclick="rejectSubmission('${sub.id}', '${am.id}')">❌ 반려</button>
+      </div>
+    `;
+  }
+  pendingEl.innerHTML = html || '<div class="card status">대기 중인 제출이 없어요</div>';
+}
+
+async function approveSubmission(subId, assignedId) {
+  await supabaseClient.from('submissions').update({ approved: true, approved_at: new Date().toISOString() }).eq('id', subId);
+  refreshAll();
+}
+
+async function rejectSubmission(subId, assignedId) {
+  await supabaseClient.from('submissions').update({ approved: false, approved_at: new Date().toISOString() }).eq('id', subId);
+  refreshAll();
+}
+
+async function loadStatusTable() {
+  const { data: participants } = await supabaseClient
+    .from('participants')
+    .select('*')
+    .eq('room_id', currentRoomId);
+
+  const statusEl = document.getElementById('statusTable');
+  if (!participants || participants.length === 0) {
+    statusEl.innerHTML = '<div class="card status">아직 참가자가 없어요</div>';
+    return;
+  }
+
+  let rows = '';
+  for (const p of participants) {
+    const { data: completed } = await supabaseClient
+      .from('assigned_missions')
+      .select('*, missions_master(base_prize)')
+      .eq('participant_id', p.id)
+      .eq('status', 'completed');
+
+    const total = (completed || []).reduce((sum, c) => sum + (c.missions_master?.base_prize || 0), 0);
+    const maxLevel = (completed || []).reduce((max, c) => Math.max(max, c.level), 0);
+
+    rows += `<tr><td>${p.nickname}</td><td>${maxLevel > 0 ? maxLevel + '단계 완료' : '-'}</td><td>${total.toLocaleString()}원</td></tr>`;
+  }
+
+  statusEl.innerHTML = `
+    <div class="card">
+      <table>
+        <tr><th>닉네임</th><th>최고 완료 단계</th><th>확정 상금</th></tr>
+        ${rows}
+      </table>
+    </div>
+  `;
+}
+
+init();
+</script>
+</body>
+</html>
