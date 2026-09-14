@@ -28,6 +28,10 @@
 .rank-nick { flex: 1; margin-left: 6px; }
 .rank-detail { color: #888; font-size: 13px; }
 #closeRankBtn { margin-top: 14px; }
+#stealBtn { width: auto; padding: 8px 16px; font-size: 14px; background: #7e57c2; color: #fff; margin-left: 8px; }
+.steal-target { cursor: pointer; }
+.steal-target:active { opacity: 0.7; }
+#closeStealBtn { margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -37,6 +41,7 @@
   <div class="rank-btn-wrap">
     <button id="rankBtn">🏆 순위 보기</button>
     <button id="rulesBtn" class="secondary" style="width:auto;padding:8px 16px;font-size:14px;margin-left:8px;" onclick="window.open('rules.html', '_blank')">📜 규칙 보기</button>
+    <button id="stealBtn">🎯 뺏기 도전</button>
   </div>
   <div id="content"></div>
 </div>
@@ -46,6 +51,14 @@
     <h3>🏆 전체 순위</h3>
     <div id="rankList">불러오는 중...</div>
     <button id="closeRankBtn" class="secondary">닫기</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="stealModal">
+  <div class="modal-box">
+    <h3>🎯 뺏기 도전</h3>
+    <div id="stealModalBody">불러오는 중...</div>
+    <button id="closeStealBtn" class="secondary">닫기</button>
   </div>
 </div>
 
@@ -61,11 +74,190 @@ if (!participantId) {
 }
 
 let pollTimer = null;
+let stolenWatchTimer = null;
+let stealPollTimer = null;
+let myRoomIdCache = null;
+
+function clearAllTimers() {
+  if (pollTimer) clearInterval(pollTimer);
+  if (stolenWatchTimer) clearInterval(stolenWatchTimer);
+}
+
+async function getMyRoomId() {
+  if (myRoomIdCache) return myRoomIdCache;
+  const { data } = await supabaseClient.from('participants').select('room_id').eq('id', participantId).single();
+  myRoomIdCache = data?.room_id || null;
+  return myRoomIdCache;
+}
+
+function startStolenWatch(assignedId) {
+  if (stolenWatchTimer) clearInterval(stolenWatchTimer);
+  stolenWatchTimer = setInterval(async () => {
+    const { data: cur } = await supabaseClient
+      .from('assigned_missions')
+      .select('status')
+      .eq('id', assignedId)
+      .maybeSingle();
+    if (cur && cur.status === 'stolen') {
+      clearInterval(stolenWatchTimer);
+      alert('😱 다른 참가자가 당신의 미션을 뺏었어요! 새 미션에 도전해보세요.');
+      renderLevelSelect();
+    }
+  }, 5000);
+}
 
 document.getElementById('rankBtn').addEventListener('click', openRanking);
 document.getElementById('closeRankBtn').addEventListener('click', () => {
   document.getElementById('rankModal').classList.remove('show');
 });
+
+document.getElementById('stealBtn').addEventListener('click', openStealModal);
+document.getElementById('closeStealBtn').addEventListener('click', () => {
+  document.getElementById('stealModal').classList.remove('show');
+  if (stealPollTimer) clearInterval(stealPollTimer);
+});
+
+async function openStealModal() {
+  const modal = document.getElementById('stealModal');
+  const body = document.getElementById('stealModalBody');
+  modal.classList.add('show');
+  body.innerHTML = '불러오는 중...';
+  if (stealPollTimer) clearInterval(stealPollTimer);
+
+  const roomId = await getMyRoomId();
+  if (!roomId) {
+    body.innerHTML = '<div class="error-msg">오류가 발생했어요.</div>';
+    return;
+  }
+
+  const { data: room } = await supabaseClient.from('rooms').select('steal_limit').eq('id', roomId).single();
+  const stealLimit = (room && typeof room.steal_limit === 'number') ? room.steal_limit : 5;
+
+  const { data: myAttempts } = await supabaseClient
+    .from('steal_attempts')
+    .select('*')
+    .eq('challenger_participant_id', participantId);
+
+  const usedCount = (myAttempts || []).length;
+  const pending = (myAttempts || []).find(a => a.status === 'pending');
+
+  if (pending) {
+    renderStealWaiting(body, pending);
+    return;
+  }
+
+  if (usedCount >= stealLimit) {
+    body.innerHTML = `<div class="card status">뺏기 시도 기회를 모두 사용했어요 (${usedCount}/${stealLimit})</div>`;
+    return;
+  }
+
+  const attemptedIds = (myAttempts || []).map(a => a.target_assigned_mission_id);
+
+  const { data: targets } = await supabaseClient
+    .from('assigned_missions')
+    .select('*, participants!inner(nickname, room_id)')
+    .eq('participants.room_id', roomId)
+    .in('status', ['진행중', 'submitted'])
+    .neq('participant_id', participantId);
+
+  const filtered = (targets || []).filter(t => !attemptedIds.includes(t.id));
+
+  if (filtered.length === 0) {
+    body.innerHTML = `
+      <div class="card status">지금 뺏기를 시도할 수 있는 사람이 없어요.</div>
+      <p class="subtitle">남은 기회: ${stealLimit - usedCount}/${stealLimit}</p>
+    `;
+    return;
+  }
+
+  body.innerHTML = `
+    <p class="subtitle">남은 기회: ${stealLimit - usedCount}/${stealLimit}</p>
+    ${filtered.map(t => `
+      <div class="card steal-target" data-id="${t.id}">
+        <b>${t.participants.nickname}</b> · ${t.level}단계 진행중
+      </div>
+    `).join('')}
+  `;
+
+  body.querySelectorAll('.steal-target').forEach(el => {
+    el.addEventListener('click', () => renderStealGuessForm(body, el.dataset.id, roomId));
+  });
+}
+
+function renderStealGuessForm(body, targetId, roomId) {
+  body.innerHTML = `
+    <div class="card">
+      <p>이 사람의 미션이 뭐라고 생각하나요?</p>
+      <textarea id="guessText" rows="3" placeholder="예: 편의점에서 아이스크림 사진 찍기" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid #ddd;font-family:inherit;"></textarea>
+      <div class="error-msg" id="guessError"></div>
+      <button id="submitGuessBtn">사회자에게 제출</button>
+      <button id="backToTargetsBtn" class="secondary">뒤로</button>
+    </div>
+  `;
+  document.getElementById('backToTargetsBtn').addEventListener('click', openStealModal);
+  document.getElementById('submitGuessBtn').addEventListener('click', async () => {
+    const guess = document.getElementById('guessText').value.trim();
+    const err = document.getElementById('guessError');
+    if (!guess) {
+      err.textContent = '추측 내용을 입력해주세요.';
+      return;
+    }
+    const btn = document.getElementById('submitGuessBtn');
+    btn.disabled = true;
+    btn.textContent = '제출 중...';
+
+    const { data: inserted, error } = await supabaseClient
+      .from('steal_attempts')
+      .insert({
+        room_id: roomId,
+        challenger_participant_id: participantId,
+        target_assigned_mission_id: targetId,
+        guess_text: guess,
+        status: 'pending'
+      })
+      .select()
+      .single();
+
+    if (error) {
+      err.textContent = '제출 실패: ' + error.message;
+      btn.disabled = false;
+      btn.textContent = '사회자에게 제출';
+      return;
+    }
+
+    renderStealWaiting(body, inserted);
+  });
+}
+
+function renderStealWaiting(body, attempt) {
+  body.innerHTML = `
+    <div class="card status">
+      🤫 사회자에게 추측을 전달했어요.<br>판단을 기다리는 중이에요...
+    </div>
+  `;
+  if (stealPollTimer) clearInterval(stealPollTimer);
+  stealPollTimer = setInterval(async () => {
+    const { data: latest } = await supabaseClient.from('steal_attempts').select('*').eq('id', attempt.id).maybeSingle();
+    if (!latest || latest.status === 'pending') return;
+    clearInterval(stealPollTimer);
+    renderStealResult(body, latest);
+  }, 4000);
+}
+
+function renderStealResult(body, attempt) {
+  if (attempt.status === 'approved') {
+    body.innerHTML = `
+      <div class="card status">🎉 뺏기 성공! ${(attempt.prize || 0).toLocaleString()}원 획득했어요.</div>
+      <button id="stealAgainBtn" class="secondary">뺏기 도전 다시 열기</button>
+    `;
+  } else {
+    body.innerHTML = `
+      <div class="card status">😢 아쉽게도 뺏기 실패했어요.</div>
+      <button id="stealAgainBtn" class="secondary">뺏기 도전 다시 열기</button>
+    `;
+  }
+  document.getElementById('stealAgainBtn').addEventListener('click', openStealModal);
+}
 
 async function openRanking() {
   const modal = document.getElementById('rankModal');
@@ -102,8 +294,15 @@ async function openRanking() {
       .eq('participant_id', p.id)
       .eq('status', 'completed');
 
-    const total = (completed || []).reduce((sum, c) => sum + (c.final_prize ?? c.missions_master?.base_prize ?? 0), 0);
-    results.push({ id: p.id, nickname: p.nickname, total });
+    const { data: steals } = await supabaseClient
+      .from('steal_attempts')
+      .select('prize')
+      .eq('challenger_participant_id', p.id)
+      .eq('status', 'approved');
+
+    const missionTotal = (completed || []).reduce((sum, c) => sum + (c.final_prize ?? c.missions_master?.base_prize ?? 0), 0);
+    const stealTotal = (steals || []).reduce((sum, s) => sum + (s.prize || 0), 0);
+    results.push({ id: p.id, nickname: p.nickname, total: missionTotal + stealTotal });
   }
 
   results.sort((a, b) => b.total - a.total);
@@ -153,6 +352,7 @@ function getFinalPrize(assigned) {
 
 
 function renderLevelSelect() {
+  clearAllTimers();
   contentEl.innerHTML = `
     <div class="card">
       <p>도전할 단계를 선택하세요</p>
@@ -227,6 +427,8 @@ async function assignMission(level, fromDouble) {
 }
 
 function renderMissionCard(assigned) {
+  clearAllTimers();
+  startStolenWatch(assigned.id);
   const m = assigned.missions_master;
   contentEl.innerHTML = `
     <div class="card">
@@ -298,6 +500,7 @@ function renderWaiting(assigned) {
   `;
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => checkApproval(assigned), 4000);
+  startStolenWatch(assigned.id);
 }
 
 async function checkApproval(assigned) {
@@ -321,6 +524,7 @@ async function checkApproval(assigned) {
 }
 
 function renderResult(assigned, approved, sub) {
+  clearAllTimers();
   if (approved) {
     const canDouble = assigned.level < 3 && (assigned.level === 1 || assigned.via_double === true);
     let infoMsg = '';
