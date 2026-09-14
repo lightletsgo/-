@@ -378,12 +378,13 @@ async function renderPenaltyScreen(assigned, sub) {
 
   const rejectedAt = new Date(sub.approved_at || Date.now()).getTime();
   const unlockAt = rejectedAt + penaltyMin * 60000;
+  const mustRestartFromLevel1 = assigned.via_double === true;
 
   contentEl.innerHTML = `
     <div class="card">
-      <p>😢 반려되었어요.</p>
+      <p>😢 반려되었어요.${mustRestartFromLevel1 ? '<br>더블 도전 중 실패해서 1단계부터 다시 시작해야 해요.' : ''}</p>
       <p class="status" id="penaltyTimer"></p>
-      <button id="retryBtn" disabled>다시 제출하기</button>
+      <button id="retryBtn" disabled>${mustRestartFromLevel1 ? '1단계부터 다시 도전하기' : '다시 제출하기'}</button>
     </div>
   `;
 
@@ -406,11 +407,16 @@ async function renderPenaltyScreen(assigned, sub) {
   tick();
   penaltyHandle = setInterval(tick, 1000);
 
-  retryBtn.addEventListener('click', () => {
+  retryBtn.addEventListener('click', async () => {
     if (retryBtn.disabled) return;
     clearInterval(penaltyHandle);
-    supabaseClient.from('assigned_missions').update({ status: '진행중' }).eq('id', assigned.id)
-      .then(() => renderMissionCard(assigned));
+    if (mustRestartFromLevel1) {
+      await supabaseClient.from('assigned_missions').update({ status: 'failed' }).eq('id', assigned.id);
+      assignMission(1, false);
+    } else {
+      await supabaseClient.from('assigned_missions').update({ status: '진행중' }).eq('id', assigned.id);
+      renderMissionCard(assigned);
+    }
   });
 }
 
