@@ -128,7 +128,9 @@ async function submitProof(assigned) {
   }
 
   const file = fileInput.files[0];
-  const filePath = `${assigned.id}/${Date.now()}_${file.name}`;
+  const extMatch = file.name.match(/\.[0-9a-zA-Z]+$/);
+  const ext = extMatch ? extMatch[0] : '';
+  const filePath = `${assigned.id}/${Date.now()}${ext}`;
 
   document.getElementById('submitBtn').disabled = true;
   document.getElementById('submitBtn').textContent = '업로드 중...';
