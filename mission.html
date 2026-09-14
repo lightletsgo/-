@@ -101,7 +101,7 @@ async function openRanking() {
       .eq('participant_id', p.id)
       .eq('status', 'completed');
 
-    const total = (completed || []).reduce((sum, c) => sum + (c.missions_master?.base_prize || 0), 0);
+    const total = (completed || []).reduce((sum, c) => sum + (c.final_prize ?? c.missions_master?.base_prize ?? 0), 0);
     results.push({ id: p.id, nickname: p.nickname, total });
   }
 
@@ -137,6 +137,20 @@ async function init() {
   }
 }
 
+const PRIZE_TABLE = {
+  '1-false': 1000,
+  '2-false': 2000,
+  '2-true': 3000,
+  '3-false': 3000,
+  '3-true': 6000
+};
+
+function getFinalPrize(assigned) {
+  const key = `${assigned.level}-${assigned.via_double === true}`;
+  return PRIZE_TABLE[key] ?? 0;
+}
+
+
 function renderLevelSelect() {
   contentEl.innerHTML = `
     <div class="card">
@@ -149,11 +163,11 @@ function renderLevelSelect() {
     </div>
   `;
   document.querySelectorAll('[data-level]').forEach(btn => {
-    btn.addEventListener('click', () => assignMission(parseInt(btn.dataset.level)));
+    btn.addEventListener('click', () => assignMission(parseInt(btn.dataset.level), false));
   });
 }
 
-async function assignMission(level) {
+async function assignMission(level, fromDouble) {
   contentEl.innerHTML = '<div class="status">미션 뽑는 중...</div>';
 
   // 이 참가자가 이미 받았던 미션 id 목록 조회 (중복 방지)
@@ -197,7 +211,8 @@ async function assignMission(level) {
       participant_id: participantId,
       mission_id: randomMission.id,
       level: level,
-      status: '진행중'
+      status: '진행중',
+      via_double: !!fromDouble
     })
     .select('*, missions_master(*)')
     .single();
@@ -297,51 +312,106 @@ async function checkApproval(assigned) {
 
   if (sub.approved === true) {
     clearInterval(pollTimer);
-    renderResult(assigned, true);
+    renderResult(assigned, true, sub);
   } else if (sub.approved === false) {
     clearInterval(pollTimer);
-    renderResult(assigned, false);
+    renderResult(assigned, false, sub);
   }
 }
 
-function renderResult(assigned, approved) {
+function renderResult(assigned, approved, sub) {
   if (approved) {
-    const isMaxLevel = assigned.level >= 3;
+    const canDouble = assigned.level < 3 && (assigned.level === 1 || assigned.via_double === true);
+    let infoMsg = '';
+    if (assigned.level === 3) {
+      infoMsg = '3단계는 최고 단계라 더블 도전은 여기까지예요';
+    } else if (!canDouble) {
+      infoMsg = '처음부터 이 단계로 바로 시작하면 더블 도전은 할 수 없어요';
+    }
     contentEl.innerHTML = `
       <div class="card">
         <p>🎉 승인 완료! 상금을 어떻게 받을까요?</p>
         <button id="takeBtn">그냥 받기</button>
-        ${isMaxLevel ? '' : '<button id="doubleBtn" class="secondary">더블 도전! (다음 단계)</button>'}
-        ${isMaxLevel ? '<p class="subtitle">3단계는 최고 단계라 더블 도전은 여기까지예요</p>' : ''}
+        ${canDouble ? '<button id="doubleBtn" class="secondary">더블 도전! (다음 단계)</button>' : ''}
+        ${infoMsg ? `<p class="subtitle">${infoMsg}</p>` : ''}
       </div>
     `;
     document.getElementById('takeBtn').addEventListener('click', async () => {
-      await supabaseClient.from('assigned_missions').update({ status: 'completed' }).eq('id', assigned.id);
+      const finalPrize = getFinalPrize(assigned);
+      await supabaseClient.from('assigned_missions').update({ status: 'completed', final_prize: finalPrize }).eq('id', assigned.id);
       contentEl.innerHTML = `
-        <div class="card status">💰 상금 확정! 수고하셨어요.</div>
+        <div class="card status">💰 ${finalPrize.toLocaleString()}원 상금 확정! 수고하셨어요.</div>
         <button id="nextMissionBtn">다음 미션 도전하기</button>
       `;
       document.getElementById('nextMissionBtn').addEventListener('click', renderLevelSelect);
     });
-    if (!isMaxLevel) {
+    if (canDouble) {
       document.getElementById('doubleBtn').addEventListener('click', async () => {
         await supabaseClient.from('assigned_missions').update({ status: 'doubled_up', chosen_double: true }).eq('id', assigned.id);
         const nextLevel = assigned.level + 1;
-        assignMission(nextLevel);
+        assignMission(nextLevel, true);
       });
     }
   } else {
-    contentEl.innerHTML = `
-      <div class="card">
-        <p>😢 반려되었어요. 다시 인증해볼까요?</p>
-        <button id="retryBtn">다시 제출하기</button>
-      </div>
-    `;
-    document.getElementById('retryBtn').addEventListener('click', () => {
-      supabaseClient.from('assigned_missions').update({ status: '진행중' }).eq('id', assigned.id)
-        .then(() => renderMissionCard(assigned));
-    });
+    renderPenaltyScreen(assigned, sub);
   }
+}
+
+async function renderPenaltyScreen(assigned, sub) {
+  contentEl.innerHTML = `<div class="card status">😢 반려되었어요. 대기 시간 확인 중...</div>`;
+
+  const { data: me } = await supabaseClient
+    .from('participants')
+    .select('room_id')
+    .eq('id', participantId)
+    .single();
+
+  let penaltyMin = 10;
+  if (me) {
+    const { data: room } = await supabaseClient
+      .from('rooms')
+      .select('penalty_minutes')
+      .eq('id', me.room_id)
+      .single();
+    if (room && typeof room.penalty_minutes === 'number') penaltyMin = room.penalty_minutes;
+  }
+
+  const rejectedAt = new Date(sub.approved_at || Date.now()).getTime();
+  const unlockAt = rejectedAt + penaltyMin * 60000;
+
+  contentEl.innerHTML = `
+    <div class="card">
+      <p>😢 반려되었어요.</p>
+      <p class="status" id="penaltyTimer"></p>
+      <button id="retryBtn" disabled>다시 제출하기</button>
+    </div>
+  `;
+
+  const retryBtn = document.getElementById('retryBtn');
+  const timerEl = document.getElementById('penaltyTimer');
+  let penaltyHandle = null;
+
+  function tick() {
+    const remain = unlockAt - Date.now();
+    if (remain <= 0) {
+      clearInterval(penaltyHandle);
+      timerEl.textContent = '✅ 이제 다시 도전할 수 있어요!';
+      retryBtn.disabled = false;
+    } else {
+      const m = Math.floor(remain / 60000);
+      const s = Math.floor((remain % 60000) / 1000);
+      timerEl.textContent = `⏳ ${m}분 ${s}초 후 다시 도전할 수 있어요`;
+    }
+  }
+  tick();
+  penaltyHandle = setInterval(tick, 1000);
+
+  retryBtn.addEventListener('click', () => {
+    if (retryBtn.disabled) return;
+    clearInterval(penaltyHandle);
+    supabaseClient.from('assigned_missions').update({ status: '진행중' }).eq('id', assigned.id)
+      .then(() => renderMissionCard(assigned));
+  });
 }
 
 init();
