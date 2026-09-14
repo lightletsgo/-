@@ -97,22 +97,21 @@ async function openRanking() {
   for (const p of participants) {
     const { data: completed } = await supabaseClient
       .from('assigned_missions')
-      .select('level')
+      .select('*, missions_master(base_prize)')
       .eq('participant_id', p.id)
       .eq('status', 'completed');
 
-    const count = (completed || []).length;
-    const maxLevel = (completed || []).reduce((max, c) => Math.max(max, c.level), 0);
-    results.push({ id: p.id, nickname: p.nickname, count, maxLevel });
+    const total = (completed || []).reduce((sum, c) => sum + (c.missions_master?.base_prize || 0), 0);
+    results.push({ id: p.id, nickname: p.nickname, total });
   }
 
-  results.sort((a, b) => b.count - a.count || b.maxLevel - a.maxLevel);
+  results.sort((a, b) => b.total - a.total);
 
   listEl.innerHTML = results.map((r, i) => `
     <div class="rank-row ${r.id === participantId ? 'me' : ''}">
       <span class="rank-num">${i + 1}</span>
       <span class="rank-nick">${r.nickname}${r.id === participantId ? ' (나)' : ''}</span>
-      <span class="rank-detail">${r.count}개 완료 · 최고 ${r.maxLevel > 0 ? r.maxLevel + '단계' : '-'}</span>
+      <span class="rank-detail">${r.total.toLocaleString()}원</span>
     </div>
   `).join('');
 }
