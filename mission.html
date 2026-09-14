@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>내 미션</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="container">
+  <h1 id="greeting">내 미션</h1>
+  <p class="subtitle" id="subtitle"></p>
+  <div id="content"></div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const participantId = localStorage.getItem('participant_id');
+const nickname = localStorage.getItem('nickname');
+const contentEl = document.getElementById('content');
+document.getElementById('subtitle').textContent = nickname ? nickname + '님' : '';
+
+if (!participantId) {
+  window.location.href = 'index.html';
+}
+
+let pollTimer = null;
+
+async function init() {
+  const { data: active } = await supabaseClient
+    .from('assigned_missions')
+    .select('*, missions_master(*)')
+    .eq('participant_id', participantId)
+    .in('status', ['진행중', 'submitted'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (active) {
+    if (active.status === '진행중') {
+      renderMissionCard(active);
+    } else {
+      renderWaiting(active);
+    }
+  } else {
+    renderLevelSelect();
+  }
+}
+
+function renderLevelSelect() {
+  contentEl.innerHTML = `
+    <div class="card">
+      <p>도전할 단계를 선택하세요</p>
+      <div class="level-buttons">
+        <button data-level="1">1단계</button>
+        <button data-level="2">2단계</button>
+        <button data-level="3">3단계</button>
+      </div>
+    </div>
+  `;
+  document.querySelectorAll('[data-level]').forEach(btn => {
+    btn.addEventListener('click', () => assignMission(parseInt(btn.dataset.level)));
+  });
+}
+
+async function assignMission(level) {
+  contentEl.innerHTML = '<div class="status">미션 뽑는 중...</div>';
+
+  const { data: missions, error } = await supabaseClient
+    .from('missions_master')
+    .select('*')
+    .eq('level', level);
+
+  if (error || !missions || missions.length === 0) {
+    contentEl.innerHTML = '<div class="error-msg">미션을 불러오지 못했어요.</div>';
+    return;
+  }
+
+  const randomMission = missions[Math.floor(Math.random() * missions.length)];
+
+  const { data: assigned, error: aError } = await supabaseClient
+    .from('assigned_missions')
+    .insert({
+      participant_id: participantId,
+      mission_id: randomMission.id,
+      level: level,
+      status: '진행중'
+    })
+    .select('*, missions_master(*)')
+    .single();
+
+  if (aError) {
+    contentEl.innerHTML = '<div class="error-msg">배정 중 오류: ' + aError.message + '</div>';
+    return;
+  }
+
+  renderMissionCard(assigned);
+}
+
+function renderMissionCard(assigned) {
+  const m = assigned.missions_master;
+  contentEl.innerHTML = `
+    <div class="card">
+      <span class="badge">${m.level}단계 · ${m.category}</span>
+      <div class="mission-content">${m.content}</div>
+      <div class="prize">${m.prize_text}</div>
+    </div>
+    <div class="card">
+      <p>📸 인증 자료를 올려주세요 (사진 또는 음성 파일)</p>
+      <input type="file" id="fileInput" accept="image/*,audio/*">
+      <div class="error-msg" id="submitError"></div>
+      <button id="submitBtn">인증 제출하기</button>
+    </div>
+  `;
+
+  document.getElementById('submitBtn').addEventListener('click', () => submitProof(assigned));
+}
+
+async function submitProof(assigned) {
+  const fileInput = document.getElementById('fileInput');
+  const submitError = document.getElementById('submitError');
+  submitError.textContent = '';
+
+  if (!fileInput.files || fileInput.files.length === 0) {
+    submitError.textContent = '파일을 선택해주세요.';
+    return;
+  }
+
+  const file = fileInput.files[0];
+  const filePath = `${assigned.id}/${Date.now()}_${file.name}`;
+
+  document.getElementById('submitBtn').disabled = true;
+  document.getElementById('submitBtn').textContent = '업로드 중...';
+
+  const { error: uploadError } = await supabaseClient
+    .storage
+    .from('mission-media')
+    .upload(filePath, file);
+
+  if (uploadError) {
+    submitError.textContent = '업로드 실패: ' + uploadError.message;
+    document.getElementById('submitBtn').disabled = false;
+    document.getElementById('submitBtn').textContent = '인증 제출하기';
+    return;
+  }
+
+  const { data: urlData } = supabaseClient.storage.from('mission-media').getPublicUrl(filePath);
+
+  await supabaseClient.from('submissions').insert({
+    assigned_mission_id: assigned.id,
+    media_url: urlData.publicUrl
+  });
+
+  await supabaseClient
+    .from('assigned_missions')
+    .update({ status: 'submitted' })
+    .eq('id', assigned.id);
+
+  renderWaiting(assigned);
+}
+
+function renderWaiting(assigned) {
+  contentEl.innerHTML = `
+    <div class="card status">
+      ✅ 제출 완료!<br>사회자 승인을 기다리는 중이에요...
+    </div>
+  `;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => checkApproval(assigned), 4000);
+}
+
+async function checkApproval(assigned) {
+  const { data: sub } = await supabaseClient
+    .from('submissions')
+    .select('*')
+    .eq('assigned_mission_id', assigned.id)
+    .order('submitted_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!sub) return;
+
+  if (sub.approved === true) {
+    clearInterval(pollTimer);
+    renderResult(assigned, true);
+  } else if (sub.approved === false) {
+    clearInterval(pollTimer);
+    renderResult(assigned, false);
+  }
+}
+
+function renderResult(assigned, approved) {
+  if (approved) {
+    contentEl.innerHTML = `
+      <div class="card">
+        <p>🎉 승인 완료! 상금을 어떻게 받을까요?</p>
+        <button id="takeBtn">그냥 받기</button>
+        <button id="doubleBtn" class="secondary">더블 도전! (다음 단계)</button>
+      </div>
+    `;
+    document.getElementById('takeBtn').addEventListener('click', async () => {
+      await supabaseClient.from('assigned_missions').update({ status: 'completed' }).eq('id', assigned.id);
+      contentEl.innerHTML = '<div class="card status">💰 상금 확정! 수고하셨어요.</div>';
+    });
+    document.getElementById('doubleBtn').addEventListener('click', async () => {
+      await supabaseClient.from('assigned_missions').update({ status: 'doubled_up', chosen_double: true }).eq('id', assigned.id);
+      const nextLevel = Math.min(assigned.level + 1, 3);
+      assignMission(nextLevel);
+    });
+  } else {
+    contentEl.innerHTML = `
+      <div class="card">
+        <p>😢 반려되었어요. 다시 인증해볼까요?</p>
+        <button id="retryBtn">다시 제출하기</button>
+      </div>
+    `;
+    document.getElementById('retryBtn').addEventListener('click', () => {
+      supabaseClient.from('assigned_missions').update({ status: '진행중' }).eq('id', assigned.id)
+        .then(() => renderMissionCard(assigned));
+    });
+  }
+}
+
+init();
+</script>
+</body>
+</html>

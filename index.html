@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>계모임 비밀미션</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="container">
+  <h1>🎯 계모임 비밀미션</h1>
+  <p class="subtitle">방 코드와 닉네임으로 입장하세요</p>
+
+  <div class="rules-box">
+    <b>📋 규칙 요약</b><br>
+    - 미션은 1~3단계, 성공하면 상금!<br>
+    - 성공 시 "그냥 받기" 또는 "더블"(다음 단계 도전) 선택 가능<br>
+    - 인증은 사진 또는 음성 파일로 제출<br>
+    - 사회자 승인이 되어야 상금이 확정돼요<br>
+    - 다른 사람 미션에 뺏기 도전도 가능!
+  </div>
+
+  <div class="card">
+    <div class="error-msg" id="errorMsg"></div>
+    <input type="text" id="roomCode" placeholder="방 코드 입력 (예: 1234)">
+    <input type="text" id="nickname" placeholder="닉네임 입력">
+    <button id="joinBtn">입장하기</button>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+document.getElementById('joinBtn').addEventListener('click', async () => {
+  const roomCode = document.getElementById('roomCode').value.trim();
+  const nickname = document.getElementById('nickname').value.trim();
+  const errorMsg = document.getElementById('errorMsg');
+  errorMsg.textContent = '';
+
+  if (!roomCode || !nickname) {
+    errorMsg.textContent = '방 코드와 닉네임을 모두 입력해주세요.';
+    return;
+  }
+
+  // 방 코드 확인
+  const { data: room, error: roomError } = await supabaseClient
+    .from('rooms')
+    .select('id, room_code')
+    .eq('room_code', roomCode)
+    .single();
+
+  if (roomError || !room) {
+    errorMsg.textContent = '존재하지 않는 방 코드예요. 사회자에게 확인해주세요.';
+    return;
+  }
+
+  // 참가자 등록
+  const { data: participant, error: pError } = await supabaseClient
+    .from('participants')
+    .insert({ room_id: room.id, nickname: nickname })
+    .select()
+    .single();
+
+  if (pError) {
+    errorMsg.textContent = '입장 중 오류가 발생했어요: ' + pError.message;
+    return;
+  }
+
+  // localStorage에 저장하고 미션 화면으로 이동
+  localStorage.setItem('participant_id', participant.id);
+  localStorage.setItem('room_id', room.id);
+  localStorage.setItem('nickname', nickname);
+  window.location.href = 'mission.html';
+});
+</script>
+</body>
+</html>
