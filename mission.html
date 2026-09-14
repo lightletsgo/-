@@ -306,11 +306,13 @@ async function checkApproval(assigned) {
 
 function renderResult(assigned, approved) {
   if (approved) {
+    const isMaxLevel = assigned.level >= 3;
     contentEl.innerHTML = `
       <div class="card">
         <p>🎉 승인 완료! 상금을 어떻게 받을까요?</p>
         <button id="takeBtn">그냥 받기</button>
-        <button id="doubleBtn" class="secondary">더블 도전! (다음 단계)</button>
+        ${isMaxLevel ? '' : '<button id="doubleBtn" class="secondary">더블 도전! (다음 단계)</button>'}
+        ${isMaxLevel ? '<p class="subtitle">3단계는 최고 단계라 더블 도전은 여기까지예요</p>' : ''}
       </div>
     `;
     document.getElementById('takeBtn').addEventListener('click', async () => {
@@ -321,11 +323,13 @@ function renderResult(assigned, approved) {
       `;
       document.getElementById('nextMissionBtn').addEventListener('click', renderLevelSelect);
     });
-    document.getElementById('doubleBtn').addEventListener('click', async () => {
-      await supabaseClient.from('assigned_missions').update({ status: 'doubled_up', chosen_double: true }).eq('id', assigned.id);
-      const nextLevel = Math.min(assigned.level + 1, 3);
-      assignMission(nextLevel);
-    });
+    if (!isMaxLevel) {
+      document.getElementById('doubleBtn').addEventListener('click', async () => {
+        await supabaseClient.from('assigned_missions').update({ status: 'doubled_up', chosen_double: true }).eq('id', assigned.id);
+        const nextLevel = assigned.level + 1;
+        assignMission(nextLevel);
+      });
+    }
   } else {
     contentEl.innerHTML = `
       <div class="card">
