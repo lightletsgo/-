@@ -18,6 +18,14 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
 .approve-btn { background: #4caf6d; }
 .reject-btn { background: #e04545; }
 .room-code-display { text-align: center; font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #ff7a45; margin: 10px 0; }
+.sub-actions button:disabled { opacity: 0.5; }
+#toast {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%) translateY(-20px);
+  background: #333; color: #fff; padding: 10px 20px; border-radius: 8px;
+  font-size: 14px; z-index: 999; opacity: 0; transition: all 0.25s ease;
+  pointer-events: none;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -25,6 +33,7 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
   <h1>🎤 사회자 대시보드</h1>
   <div id="content"></div>
 </div>
+<div id="toast"></div>
 
 <script src="config.js"></script>
 <script>
@@ -146,6 +155,7 @@ async function loadPending() {
       .maybeSingle();
 
     if (!sub) continue;
+    if (sub.approved !== null) continue; // 이미 승인/반려 처리된 건 제외
 
     const isImage = /\.(jpe?g|png|gif|webp)$/i.test(sub.media_url || '');
 
@@ -161,21 +171,40 @@ async function loadPending() {
         </div>
       </div>
       <div class="sub-actions" style="margin-bottom:16px;">
-        <button class="approve-btn" onclick="approveSubmission('${sub.id}', '${am.id}')">✅ 승인</button>
-        <button class="reject-btn" onclick="rejectSubmission('${sub.id}', '${am.id}')">❌ 반려</button>
+        <button class="approve-btn" onclick="approveSubmission('${sub.id}', '${am.id}', this)">✅ 승인</button>
+        <button class="reject-btn" onclick="rejectSubmission('${sub.id}', '${am.id}', this)">❌ 반려</button>
       </div>
     `;
   }
   pendingEl.innerHTML = html || '<div class="card status">대기 중인 제출이 없어요</div>';
 }
 
-async function approveSubmission(subId, assignedId) {
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
+function disableCardButtons(btn, label) {
+  const actions = btn.closest('.sub-actions');
+  if (!actions) return;
+  actions.querySelectorAll('button').forEach(b => b.disabled = true);
+  btn.textContent = label;
+}
+
+async function approveSubmission(subId, assignedId, btn) {
+  if (btn) disableCardButtons(btn, '처리 중...');
   await supabaseClient.from('submissions').update({ approved: true, approved_at: new Date().toISOString() }).eq('id', subId);
+  showToast('✅ 승인했어요');
   refreshAll();
 }
 
-async function rejectSubmission(subId, assignedId) {
+async function rejectSubmission(subId, assignedId, btn) {
+  if (btn) disableCardButtons(btn, '처리 중...');
   await supabaseClient.from('submissions').update({ approved: false, approved_at: new Date().toISOString() }).eq('id', subId);
+  showToast('❌ 반려했어요');
   refreshAll();
 }
 
