@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>게임 규칙</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.container { max-width: 720px; }
+.rule-title {
+  font-size: 20px; font-weight: bold; border-left: 4px solid #ff7a45;
+  padding-left: 10px; margin: 26px 0 10px;
+}
+.rule-title:first-of-type { margin-top: 10px; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.tag {
+  background: #fff3ec; color: #ff7a45; border-radius: 20px;
+  padding: 6px 12px; font-size: 13px; white-space: nowrap;
+}
+ul.rule-list { padding-left: 18px; margin: 8px 0; }
+ul.rule-list li { margin-bottom: 8px; line-height: 1.5; font-size: 14px; }
+table.prize-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+table.prize-table th { background: #fff3ec; color: #ff7a45; padding: 10px 8px; text-align: left; }
+table.prize-table td { padding: 10px 8px; border-bottom: 1px solid #eee; }
+table.prize-table th:last-child, table.prize-table td:last-child { text-align: right; }
+.tip-box {
+  background: #fff8e6; border-radius: 8px; padding: 10px 14px;
+  font-size: 13px; color: #8a6d00; margin-top: 14px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📜 게임 규칙</h1>
+
+  <div class="rule-title">1. 미션 종류</div>
+  <div class="tag-row">
+    <span class="tag">📷 사진촬영</span>
+    <span class="tag">🎤 셀카</span>
+    <span class="tag">🎙 녹음</span>
+    <span class="tag">💬 카톡받기</span>
+    <span class="tag">🙋 외부인 도움받기</span>
+    <span class="tag">🔍 물건 구하기</span>
+    <span class="tag">🎭 미참석자 대상 활동</span>
+  </div>
+
+  <div class="rule-title">2. 진행 방식</div>
+  <ul class="rule-list">
+    <li>각자 비밀리에 개인별 미션을 부여받아 수행합니다.</li>
+    <li><b>1단계부터 시작하는 경우</b>: 성공 시 <b>그냥 받기</b> 또는 <b>더블(다음 단계 도전)</b> 중 선택할 수 있습니다.</li>
+    <li>더블은 최대 3단계까지만 진행할 수 있습니다. (1 → 2 → 3)</li>
+    <li>처음부터 2단계 또는 3단계를 바로 신청할 수도 있습니다. 단, 바로 2단계로 시작한 경우 성공해도 3단계로 더블할 수 없습니다.</li>
+    <li>더블을 선택했다가 실패하면 상금을 받을 수 없고, <b>1단계 미션부터 다시 시작</b>해야 합니다.</li>
+    <li>미션에 실패(반려)하면 사회자가 정한 대기 시간이 지나야 다시 도전할 수 있습니다. (더블이 아닌 실패는 같은 미션으로, 더블 실패는 1단계 새 미션으로 재도전)</li>
+  </ul>
+
+  <div class="rule-title">3. 상금표</div>
+  <table class="prize-table">
+    <tr><th>진행 방식</th><th>상금</th></tr>
+    <tr><td>1단계 그냥 받기</td><td>1,000원</td></tr>
+    <tr><td>처음부터 바로 2단계 신청 → 성공 (종료)</td><td>2,000원</td></tr>
+    <tr><td>1단계 성공 → 더블 → 2단계 성공</td><td>3,000원</td></tr>
+    <tr><td>처음부터 바로 3단계 신청 → 성공</td><td>3,000원</td></tr>
+    <tr><td>1 → 2단계 성공 → 더블 → 3단계 성공</td><td>6,000원</td></tr>
+  </table>
+
+  <div class="rule-title">4. 미션 뺏기</div>
+  <ul class="rule-list">
+    <li>상대방이 아직 수행 중(완료 전)인 미션을 내가 대신 성공시키면 뺏기가 성립합니다.</li>
+    <li>한 사람의 미션 하나당 1회만 도전할 수 있습니다.</li>
+    <li>뺏기에 성공하면 상대가 도전 중이던 단계의 성공 금액을 그대로 고정으로 받습니다.</li>
+    <li>뺏기는 더블이 불가능합니다.</li>
+  </ul>
+
+  <div class="tip-box">
+    💡 Tip: 단계를 하나씩 밟아갈수록 상금이 커지는 구조입니다. 중간 단계를 건너뛰거나 바로 높은 단계에 도전하면 리스크는 줄지만 상금은 상대적으로 적어요.
+  </div>
+
+  <button id="closeBtn" class="secondary" style="margin-top:24px;">닫기</button>
+</div>
+<script>
+document.getElementById('closeBtn').addEventListener('click', () => {
+  if (window.history.length > 1) window.close();
+  window.location.href = 'index.html';
+});
+</script>
+</body>
+</html>
