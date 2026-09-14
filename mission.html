@@ -6,12 +6,46 @@
 <title>내 미션</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.rank-btn-wrap { text-align: center; margin-bottom: 10px; }
+#rankBtn { width: auto; padding: 8px 16px; font-size: 14px; background: #ffb74d; }
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  z-index: 1000; align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: #fff; border-radius: 12px; padding: 20px; width: 90%; max-width: 420px;
+  max-height: 80vh; overflow-y: auto;
+}
+.modal-box h3 { margin-top: 0; }
+.rank-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 4px; border-bottom: 1px solid #eee; font-size: 14px;
+}
+.rank-row.me { background: #fff7e6; border-radius: 6px; }
+.rank-num { width: 28px; font-weight: bold; color: #ff7a45; }
+.rank-nick { flex: 1; margin-left: 6px; }
+.rank-detail { color: #888; font-size: 13px; }
+#closeRankBtn { margin-top: 14px; }
+</style>
 </head>
 <body>
 <div class="container">
   <h1 id="greeting">내 미션</h1>
   <p class="subtitle" id="subtitle"></p>
+  <div class="rank-btn-wrap">
+    <button id="rankBtn">🏆 순위 보기</button>
+  </div>
   <div id="content"></div>
+</div>
+
+<div class="modal-overlay" id="rankModal">
+  <div class="modal-box">
+    <h3>🏆 전체 순위</h3>
+    <div id="rankList">불러오는 중...</div>
+    <button id="closeRankBtn" class="secondary">닫기</button>
+  </div>
 </div>
 
 <script src="config.js"></script>
@@ -26,6 +60,62 @@ if (!participantId) {
 }
 
 let pollTimer = null;
+
+document.getElementById('rankBtn').addEventListener('click', openRanking);
+document.getElementById('closeRankBtn').addEventListener('click', () => {
+  document.getElementById('rankModal').classList.remove('show');
+});
+
+async function openRanking() {
+  const modal = document.getElementById('rankModal');
+  const listEl = document.getElementById('rankList');
+  modal.classList.add('show');
+  listEl.innerHTML = '불러오는 중...';
+
+  const { data: me } = await supabaseClient
+    .from('participants')
+    .select('room_id')
+    .eq('id', participantId)
+    .single();
+
+  if (!me) {
+    listEl.innerHTML = '<div class="error-msg">순위를 불러오지 못했어요.</div>';
+    return;
+  }
+
+  const { data: participants } = await supabaseClient
+    .from('participants')
+    .select('*')
+    .eq('room_id', me.room_id);
+
+  if (!participants || participants.length === 0) {
+    listEl.innerHTML = '<div class="status">아직 참가자가 없어요</div>';
+    return;
+  }
+
+  const results = [];
+  for (const p of participants) {
+    const { data: completed } = await supabaseClient
+      .from('assigned_missions')
+      .select('level')
+      .eq('participant_id', p.id)
+      .eq('status', 'completed');
+
+    const count = (completed || []).length;
+    const maxLevel = (completed || []).reduce((max, c) => Math.max(max, c.level), 0);
+    results.push({ id: p.id, nickname: p.nickname, count, maxLevel });
+  }
+
+  results.sort((a, b) => b.count - a.count || b.maxLevel - a.maxLevel);
+
+  listEl.innerHTML = results.map((r, i) => `
+    <div class="rank-row ${r.id === participantId ? 'me' : ''}">
+      <span class="rank-num">${i + 1}</span>
+      <span class="rank-nick">${r.nickname}${r.id === participantId ? ' (나)' : ''}</span>
+      <span class="rank-detail">${r.count}개 완료 · 최고 ${r.maxLevel > 0 ? r.maxLevel + '단계' : '-'}</span>
+    </div>
+  `).join('');
+}
 
 async function init() {
   const { data: active } = await supabaseClient
